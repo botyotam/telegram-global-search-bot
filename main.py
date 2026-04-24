@@ -1,9 +1,7 @@
 import os
 import asyncio
 from telethon import TelegramClient, events, Button
-from telethon.tl.functions.contacts import SearchRequest
-from telethon.tl.functions.messages import SearchGlobalRequest
-from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl, InputPeerEmpty, InputMessagesFilterEmpty
+from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl
 
 # Konfigurasi dari Environment Variables
 API_ID = int(os.getenv('API_ID', 0))
@@ -16,14 +14,10 @@ if not API_ID or not API_HASH:
 client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 # Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
-# Dalam produksi, sebaiknya gunakan database atau cache yang lebih persisten
 search_cache = {}
 
 CATEGORIES = {
     'all': 'Semua',
-    'channel': 'Channel',
-    'group': 'Grup',
-    'bot': 'Bot',
     'video': 'Video',
     'photo': 'Gambar',
     'file': 'File',
@@ -42,35 +36,16 @@ def get_filter(category):
 async def perform_search(query, category='all'):
     results = []
     
-    # 1. Cari Channel, Grup, dan Bot (Global Search)
-    # Temporarily disable this block as SearchRequest is not suitable for global entity search.
-    # The previous error was due to SearchRequest being called without a peer, which is required for contact search.
-    # If global entity search is needed, a different Telethon API should be used.
-    # if category in ['all', 'channel', 'group', 'bot']:
-    if False:
-        # SearchRequest is for contacts, not global entities. Removing this part or replacing with a more appropriate global search if available.
-        # For now, we will rely on SearchGlobalRequest for messages and media.
-        # If the intent was to search for public channels/groups/bots, a different Telethon API call is needed.
-        # For example, client.iter_entities() or client.get_entity() with a username.
-        pass # No direct global search for entities with SearchRequest
-
-    # 2. Cari Pesan/Media (Global Message Search)
-    if category in ['all', 'video', 'photo', 'file', 'music', 'link']:
-        msg_filter = get_filter(category)
-        # SearchGlobalRequest mencari pesan di seluruh Telegram (yang bisa diakses user/bot)
-        msg_res = await client(SearchGlobalRequest(
-            q=query,
-            filter=msg_filter or InputMessagesFilterEmpty(),
-            min_date=None,
-            max_date=None,
-            offset_rate=0,
-            offset_id=0,
-            offset_peer=InputPeerEmpty(),
-            limit=50
-        ))
-        
-        for msg in msg_res.messages:
-            # Mengambil info chat dari pesan
+    # Karena SearchGlobalRequest tidak diizinkan untuk BOT, 
+    # kita menggunakan pendekatan alternatif. 
+    # Bot hanya bisa mencari di chat di mana ia menjadi anggota.
+    # Untuk pencarian global yang sesungguhnya, diperlukan akun USER (bukan BOT).
+    
+    msg_filter = get_filter(category)
+    
+    try:
+        # Mencari pesan di semua chat yang diikuti bot
+        async for msg in client.iter_messages(None, search=query, filter=msg_filter, limit=50):
             try:
                 chat = await msg.get_chat()
                 title = getattr(chat, 'title', 'Pesan')
@@ -84,6 +59,8 @@ async def perform_search(query, category='all'):
                 })
             except:
                 continue
+    except Exception as e:
+        print(f"Error during search: {e}")
 
     return results
 
@@ -92,13 +69,13 @@ def create_pagination_keyboard(query, category, page, total_pages):
     # Baris 1: Filter Kategori
     row1 = [
         Button.inline("All", data=f"cat_{query}_all_{page}"),
-        Button.inline("Channel", data=f"cat_{query}_channel_{page}"),
-        Button.inline("Grup", data=f"cat_{query}_group_{page}")
+        Button.inline("Video", data=f"cat_{query}_video_{page}"),
+        Button.inline("Gambar", data=f"cat_{query}_photo_{page}")
     ]
     row2 = [
-        Button.inline("Video", data=f"cat_{query}_video_{page}"),
-        Button.inline("Gambar", data=f"cat_{query}_photo_{page}"),
-        Button.inline("File", data=f"cat_{query}_file_{page}")
+        Button.inline("File", data=f"cat_{query}_file_{page}"),
+        Button.inline("Musik", data=f"cat_{query}_music_{page}"),
+        Button.inline("Link", data=f"cat_{query}_link_{page}")
     ]
     
     # Baris Navigasi
@@ -117,11 +94,11 @@ async def handler(event):
     if len(query) < 3:
         return await event.respond("Keyword terlalu pendek (min 3 karakter).")
     
-    msg = await event.respond(f"🔍 Mencari '{query}'...")
+    msg = await event.respond(f"🔍 Mencari '{query}'...\n(Catatan: Bot hanya bisa mencari di grup/channel tempat ia bergabung)")
     results = await perform_search(query)
     
     if not results:
-        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.")
+        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.\nBot tidak dapat melakukan pencarian global Telegram secara luas karena batasan API untuk akun Bot.")
     
     search_cache[query] = results
     total_pages = (len(results) + 9) // 10
@@ -142,21 +119,18 @@ async def callback_handler(event):
     page = int(data[3])
     
     if action == 'cat':
-        # Jika ganti kategori, lakukan pencarian ulang untuk kategori tersebut
         await event.answer("Mengubah kategori...")
         results = await perform_search(query, category)
         search_cache[f"{query}_{category}"] = results
         current_results = results
     else:
-        # Jika navigasi, ambil dari cache jika ada
         current_results = search_cache.get(f"{query}_{category}") or search_cache.get(query)
         if not current_results:
-            # Re-search jika cache hilang
             current_results = await perform_search(query, category)
             search_cache[f"{query}_{category}"] = current_results
 
     if not current_results:
-        return await event.edit("Data tidak ditemukan atau sesi berakhir.")
+        return await event.edit("Data tidak ditemukan atau bot tidak memiliki akses ke pesan tersebut.")
 
     total_pages = (len(current_results) + 9) // 10
     start = page * 10
