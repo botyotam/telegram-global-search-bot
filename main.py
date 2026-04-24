@@ -37,6 +37,19 @@ CATEGORIES = {
     'link': 'Link'
 }
 
+# Mapping tipe ke emoji
+TYPE_EMOJIS = {
+    "Channel": "📢",
+    "Grup": "👥",
+    "Bot": "🤖",
+    "Pesan": "💬",
+    "Video": "📹",
+    "Photo": "🖼️",
+    "File": "📁",
+    "Music": "🎵",
+    "Link": "🔗"
+}
+
 def get_filter(category):
     if category == 'video': return InputMessagesFilterVideo()
     if category == 'photo': return InputMessagesFilterPhotos()
@@ -52,9 +65,10 @@ async def perform_search(query, category='all'):
         return results
 
     # 1. Cari Channel, Grup, dan Bot (Global Search)
+    # Meningkatkan limit dari 50 ke 100 untuk hasil lebih banyak
     if category in ['all', 'channel', 'group', 'bot']:
         try:
-            search_res = await user_client(SearchRequest(q=query, limit=50))
+            search_res = await user_client(SearchRequest(q=query, limit=100))
             for chat in search_res.chats:
                 is_bot = getattr(chat, 'bot', False)
                 is_channel = getattr(chat, 'broadcast', False)
@@ -65,16 +79,23 @@ async def perform_search(query, category='all'):
                 if category == 'bot' and not is_bot: continue
                 
                 type_str = "Channel" if is_channel else ("Bot" if is_bot else "Grup")
-                username = f"@{chat.username}" if chat.username else "Private"
+                # Menggunakan username jika ada, jika tidak pakai ID (untuk private chat/group)
+                if chat.username:
+                    link = f"https://t.me/{chat.username}"
+                else:
+                    # Untuk chat tanpa username, link t.me/c/ID/ tidak selalu bekerja tanpa akses
+                    link = f"https://t.me/c/{chat.id}/1" if hasattr(chat, 'id') else "N/A"
+                
                 results.append({
                     'title': chat.title,
-                    'link': f"https://t.me/{chat.username}" if chat.username else "N/A",
+                    'link': link,
                     'type': type_str
                 })
         except Exception as e:
             print(f"Error during entity search: {e}")
 
     # 2. Cari Pesan/Media (Global Message Search)
+    # Meningkatkan limit dari 50 ke 100
     if category in ['all', 'video', 'photo', 'file', 'music', 'link']:
         msg_filter = get_filter(category)
         try:
@@ -86,7 +107,7 @@ async def perform_search(query, category='all'):
                 offset_rate=0,
                 offset_id=0,
                 offset_peer=InputPeerEmpty(),
-                limit=50
+                limit=100
             ))
             
             for msg in msg_res.messages:
@@ -94,7 +115,19 @@ async def perform_search(query, category='all'):
                     chat = await msg.get_chat()
                     title = getattr(chat, 'title', 'Pesan')
                     username = getattr(chat, 'username', None)
-                    link = f"https://t.me/{username}/{msg.id}" if username else "N/A"
+                    
+                    # Perbaikan Link Pesan:
+                    # Jika ada username: t.me/username/id
+                    # Jika tidak ada (private): t.me/c/chat_id/id
+                    if username:
+                        link = f"https://t.me/{username}/{msg.id}"
+                    else:
+                        # Telethon chat.id biasanya positif, tapi untuk link t.me/c/ butuh format tertentu
+                        # Biasanya ID grup/channel di t.me/c/ adalah ID tanpa prefix -100
+                        cid = str(chat.id)
+                        if cid.startswith("-100"):
+                            cid = cid[4:]
+                        link = f"https://t.me/c/{cid}/{msg.id}"
                     
                     results.append({
                         'title': f"{title} (Pesan)",
@@ -169,7 +202,8 @@ async def main():
         display_results = results[0:10]
         text = f"🔎 Hasil Pencarian: **{query}**\n\n"
         for i, res in enumerate(display_results, 1):
-            text += f"{i}. [{res['title']}]({res['link']}) ({res['type']})\n"
+            emoji = TYPE_EMOJIS.get(res['type'], "🔹")
+            text += f"{i}. {emoji} [{res['title']}]({res['link']}) ({res['type']})\n"
         
         await msg.edit(text, buttons=create_pagination_keyboard(query, 'all', 0, total_pages), link_preview=False)
 
@@ -202,7 +236,8 @@ async def main():
         
         text = f"🔎 Hasil Pencarian: **{query}** ({CATEGORIES.get(category, 'Semua')})\n\n"
         for i, res in enumerate(display_results, start + 1):
-            text += f"{i}. [{res['title']}]({res['link']}) ({res['type']})\n"
+            emoji = TYPE_EMOJIS.get(res['type'], "🔹")
+            text += f"{i}. {emoji} [{res['title']}]({res['link']}) ({res['type']})\n"
         
         await event.edit(text, buttons=create_pagination_keyboard(query, category, page, total_pages), link_preview=False)
 
