@@ -63,6 +63,7 @@ async def perform_search(query, category='all'):
             filter=msg_filter or None,
             min_date=None,
             max_date=None,
+            offset_rate=0,
             offset_id=0,
             offset_peer=None,
             limit=50
