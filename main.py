@@ -15,18 +15,12 @@ SESSION_STRING = os.getenv("SESSION_STRING", "")
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set as environment variables.")
 
-# Inisialisasi Bot Client
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN must be set as an environment variable.")
-bot_client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-# Inisialisasi User Client untuk pencarian global
+# Global clients
+bot_client = None
 user_client = None
-if SESSION_STRING:
-    user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    user_client.start()
-else:
-    print("Peringatan: SESSION_STRING tidak ditemukan. Pencarian global mungkin tidak berfungsi.")
 
 # Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
 search_cache = {}
@@ -143,68 +137,84 @@ def create_pagination_keyboard(query, category, page, total_pages):
     
     return [row1, row2, row3, nav_row]
 
-@bot_client.on(events.NewMessage(pattern='^(?!/).*'))
-async def handler(event):
-    query = event.text
-    if len(query) < 3:
-        return await event.respond("Keyword terlalu pendek (min 3 karakter).")
-    
-    msg = await event.respond(f"🔍 Mencari '{query}'...")
-    results = await perform_search(query)
-    
-    if not results:
-        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.\nPastikan SESSION_STRING sudah diatur dengan benar dan akun user aktif.")
-    
-    search_cache[query] = results
-    total_pages = (len(results) + 9) // 10
-    
-    display_results = results[0:10]
-    text = f"🔎 Hasil Pencarian: **{query}**\n\n"
-    for i, res in enumerate(display_results, 1):
-        text += f"{i}. [{res['title']}]({res['link']}) ({res['type']})\n"
-    
-    await msg.edit(text, buttons=create_pagination_keyboard(query, 'all', 0, total_pages), link_preview=False)
-
-@bot_client.on(events.CallbackQuery(data=lambda d: d.startswith(b'nav_') or d.startswith(b'cat_')))
-async def callback_handler(event):
-    data = event.data.decode().split('_')
-    action = data[0] # nav atau cat
-    query = data[1]
-    category = data[2]
-    page = int(data[3])
-    
-    if action == 'cat':
-        await event.answer("Mengubah kategori...")
-        results = await perform_search(query, category)
-        search_cache[f"{query}_{category}"] = results
-        current_results = results
-    else:
-        current_results = search_cache.get(f"{query}_{category}") or search_cache.get(query)
-        if not current_results:
-            current_results = await perform_search(query, category)
-            search_cache[f"{query}_{category}"] = current_results
-
-    if not current_results:
-        return await event.edit("Data tidak ditemukan atau sesi berakhir.")
-
-    total_pages = (len(current_results) + 9) // 10
-    start = page * 10
-    end = start + 10
-    display_results = current_results[start:end]
-    
-    text = f"🔎 Hasil Pencarian: **{query}** ({CATEGORIES.get(category, 'Semua')})\n\n"
-    for i, res in enumerate(display_results, start + 1):
-        text += f"{i}. [{res['title']}]({res['link']}) ({res['type']})\n"
-    
-    await event.edit(text, buttons=create_pagination_keyboard(query, category, page, total_pages), link_preview=False)
-
-print("Bot sedang berjalan...")
-# Run both clients until disconnected
 async def main():
+    global bot_client, user_client
+    
+    # Inisialisasi Bot Client di dalam event loop
+    bot_client = TelegramClient("bot_session", API_ID, API_HASH)
+    await bot_client.start(bot_token=BOT_TOKEN)
+    
+    # Inisialisasi User Client di dalam event loop
+    if SESSION_STRING:
+        user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+        await user_client.start()
+    else:
+        print("Peringatan: SESSION_STRING tidak ditemukan. Pencarian global mungkin tidak berfungsi.")
+
+    @bot_client.on(events.NewMessage(pattern='^(?!/).*'))
+    async def handler(event):
+        query = event.text
+        if len(query) < 3:
+            return await event.respond("Keyword terlalu pendek (min 3 karakter).")
+        
+        msg = await event.respond(f"🔍 Mencari '{query}'...")
+        results = await perform_search(query)
+        
+        if not results:
+            return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.\nPastikan SESSION_STRING sudah diatur dengan benar dan akun user aktif.")
+        
+        search_cache[query] = results
+        total_pages = (len(results) + 9) // 10
+        
+        display_results = results[0:10]
+        text = f"🔎 Hasil Pencarian: **{query}**\n\n"
+        for i, res in enumerate(display_results, 1):
+            text += f"{i}. [{res['title']}]({res['link']}) ({res['type']})\n"
+        
+        await msg.edit(text, buttons=create_pagination_keyboard(query, 'all', 0, total_pages), link_preview=False)
+
+    @bot_client.on(events.CallbackQuery(data=lambda d: d.startswith(b'nav_') or d.startswith(b'cat_')))
+    async def callback_handler(event):
+        data = event.data.decode().split('_')
+        action = data[0] # nav atau cat
+        query = data[1]
+        category = data[2]
+        page = int(data[3])
+        
+        if action == 'cat':
+            await event.answer("Mengubah kategori...")
+            results = await perform_search(query, category)
+            search_cache[f"{query}_{category}"] = results
+            current_results = results
+        else:
+            current_results = search_cache.get(f"{query}_{category}") or search_cache.get(query)
+            if not current_results:
+                current_results = await perform_search(query, category)
+                search_cache[f"{query}_{category}"] = current_results
+
+        if not current_results:
+            return await event.edit("Data tidak ditemukan atau sesi berakhir.")
+
+        total_pages = (len(current_results) + 9) // 10
+        start = page * 10
+        end = start + 10
+        display_results = current_results[start:end]
+        
+        text = f"🔎 Hasil Pencarian: **{query}** ({CATEGORIES.get(category, 'Semua')})\n\n"
+        for i, res in enumerate(display_results, start + 1):
+            text += f"{i}. [{res['title']}]({res['link']}) ({res['type']})\n"
+        
+        await event.edit(text, buttons=create_pagination_keyboard(query, category, page, total_pages), link_preview=False)
+
+    print("Bot sedang berjalan...")
+    # Run both clients until disconnected
     await asyncio.gather(
         bot_client.run_until_disconnected(),
-        user_client.run_until_disconnected() if user_client else asyncio.sleep(0) # user_client might be None
+        user_client.run_until_disconnected() if user_client else asyncio.sleep(0)
     )
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
