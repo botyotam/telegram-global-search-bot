@@ -12,7 +12,10 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set as environment variables.")
-client = TelegramClient(\'bot_session\', API_ID, API_HASH).start(bot_token=BOT_TOKEN)# Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
+
+client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+
+# Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
 # Dalam produksi, sebaiknya gunakan database atau cache yang lebih persisten
 search_cache = {}
 
@@ -50,23 +53,6 @@ async def perform_search(query, category='all'):
         # If the intent was to search for public channels/groups/bots, a different Telethon API call is needed.
         # For example, client.iter_entities() or client.get_entity() with a username.
         pass # No direct global search for entities with SearchRequest
-
-        for chat in search_res.chats:
-            is_bot = getattr(chat, 'bot', False)
-            is_channel = getattr(chat, 'broadcast', False)
-            is_group = not is_channel and not is_bot
-            
-            if category == 'channel' and not is_channel: continue
-            if category == 'group' and not is_group: continue
-            if category == 'bot' and not is_bot: continue
-            
-            type_str = "Channel" if is_channel else ("Bot" if is_bot else "Grup")
-            username = f"@{chat.username}" if chat.username else "Private"
-            results.append({
-                'title': chat.title,
-                'link': f"https://t.me/{chat.username}" if chat.username else "N/A",
-                'type': type_str
-            })
 
     # 2. Cari Pesan/Media (Global Message Search)
     if category in ['all', 'video', 'photo', 'file', 'music', 'link']:
