@@ -3,7 +3,7 @@ import asyncio
 from telethon import TelegramClient, events, Button
 from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import SearchGlobalRequest
-from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl, InputPeerEmpty
+from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl, InputPeerEmpty, InputMessagesFilterEmpty
 
 # Konfigurasi dari Environment Variables
 API_ID = int(os.getenv('API_ID', 0))
@@ -60,7 +60,7 @@ async def perform_search(query, category='all'):
         # SearchGlobalRequest mencari pesan di seluruh Telegram (yang bisa diakses user/bot)
         msg_res = await client(SearchGlobalRequest(
             q=query,
-            filter=msg_filter or None,
+            filter=msg_filter or InputMessagesFilterEmpty(),
             min_date=None,
             max_date=None,
             offset_rate=0,
