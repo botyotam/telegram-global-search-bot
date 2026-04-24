@@ -12,11 +12,21 @@ from telethon.tl.types import (
     InputMessagesFilterUrl, InputPeerEmpty, InputMessagesFilterEmpty
 )
 
-# Konfigurasi Logging
+# Konfigurasi Logging yang diperbaiki
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 log_stream = BytesIO()
-stream_handler = logging.StreamHandler(log_stream)
+# Gunakan handler yang mendukung string untuk BytesIO
+class StringStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.stream.write(msg.encode('utf-8') + b'\n')
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+stream_handler = StringStreamHandler(log_stream)
 logger.addHandler(stream_handler)
 
 # Konfigurasi dari Environment Variables
@@ -63,7 +73,9 @@ async def perform_search(query, category='all'):
     # 1. Cari Channel, Grup, dan Bot
     if category in ['all', 'channel', 'group', 'bot']:
         try:
-            search_res = await user_client(SearchRequest(q=query, limit=100))
+            # Gunakan bot_client jika user_client tidak tersedia untuk pencarian publik
+            client = user_client if user_client else bot_client
+            search_res = await client(SearchRequest(q=query, limit=100))
             for chat in search_res.chats:
                 is_bot = getattr(chat, 'bot', False)
                 is_channel = getattr(chat, 'broadcast', False)
@@ -77,15 +89,14 @@ async def perform_search(query, category='all'):
                 link = f"https://t.me/{chat.username}" if chat.username else f"https://t.me/c/{str(chat.id).replace('-100', '')}/1"
                 
                 results.append({'title': chat.title, 'link': link, 'type': type_str})
-            logger.info(f"Ditemukan {len(results)} entitas (Channel/Grup/Bot)")
+            logger.info(f"Ditemukan {len(results)} entitas")
         except Exception as e:
             logger.error(f"Error entity search: {e}")
 
-    # 2. Cari Pesan/Media (Global Message Search)
+    # 2. Cari Pesan/Media (Global Message Search) - WAJIB USER_CLIENT
     if user_client and category in ['all', 'video', 'photo', 'file', 'music', 'link']:
         msg_filter = get_filter(category)
         try:
-            # Jika kategori 'all', kita lakukan pencarian tanpa filter untuk menangkap semua pesan/caption
             msg_res = await user_client(SearchGlobalRequest(
                 q=query,
                 filter=msg_filter or InputMessagesFilterEmpty(),
@@ -103,7 +114,6 @@ async def perform_search(query, category='all'):
                     username = getattr(chat, 'username', None)
                     link = f"https://t.me/{username}/{msg.id}" if username else f"https://t.me/c/{str(chat.id).replace('-100', '')}/{msg.id}"
                     
-                    # Deteksi tipe media dari pesan
                     m_type = "Pesan"
                     if msg.video: m_type = "Video"
                     elif msg.photo: m_type = "Photo"
@@ -114,22 +124,19 @@ async def perform_search(query, category='all'):
                         if any(isinstance(e, (MessageEntityUrl, MessageEntityTextUrl)) for e in msg.entities):
                             m_type = "Link"
                     
-                    # Jika kategori spesifik dipilih, pastikan tipe cocok
-                    if category != 'all' and category.lower() not in m_type.lower() and category != 'photo' and category != 'video':
-                        # Khusus photo/video/file/music/link sudah difilter oleh Telegram API di SearchGlobalRequest
-                        pass
-
                     results.append({
                         'title': f"{title} ({m_type})",
                         'link': link,
                         'type': m_type
                     })
                     msg_count += 1
-                except Exception as e:
+                except:
                     continue
             logger.info(f"Ditemukan {msg_count} pesan/media")
         except Exception as e:
             logger.error(f"Error message search: {e}")
+    elif not user_client and category not in ['all', 'channel', 'group', 'bot']:
+        logger.warning("Pencarian media dilewati karena user_client tidak aktif.")
 
     return results
 
@@ -151,7 +158,7 @@ async def main():
     bot_client = TelegramClient("bot_session", API_ID, API_HASH)
     await bot_client.start(bot_token=BOT_TOKEN)
     
-    user_status = "❌ Tidak Terhubung"
+    user_status = "❌ Tidak Terhubung (Session String Kosong)"
     if SESSION_STRING:
         try:
             user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -160,7 +167,8 @@ async def main():
             user_status = f"✅ Terhubung sebagai {me.first_name} (@{me.username})"
             logger.info(f"User client aktif: {me.username}")
         except Exception as e:
-            user_status = f"⚠️ Error: {str(e)}"
+            user_status = f"⚠️ Error Session: {str(e)}"
+            user_client = None # Pastikan None jika gagal
             logger.error(f"Gagal memulai user client: {e}")
 
     @bot_client.on(events.NewMessage(pattern='/start'))
@@ -170,14 +178,14 @@ async def main():
     @bot_client.on(events.NewMessage(pattern='/status'))
     async def status_handler(event):
         if event.sender_id == ADMIN_ID:
-            await event.respond(f"📊 **Status Sistem**\n\n🔹 **Bot:** ✅ Aktif\n🔹 **User Session:** {user_status}")
+            await event.respond(f"📊 **Status Sistem**\n\n🔹 **Bot:** ✅ Aktif\n🔹 **User Session:** {user_status}\n\n💡 *Jika error AuthKeyDuplicated, silakan buat SESSION_STRING baru.*")
 
     @bot_client.on(events.NewMessage(pattern='/logs'))
     async def logs_handler(event):
         if event.sender_id == ADMIN_ID:
             log_stream.seek(0)
-            logs = log_stream.read().decode()[-4000:] # Ambil 4000 karakter terakhir
-            await event.respond(f"📜 **Internal Logs (Last 4k chars):**\n\n`{logs}`" if logs else "Log kosong.")
+            logs = log_stream.read().decode('utf-8', errors='ignore')[-4000:]
+            await event.respond(f"📜 **Internal Logs:**\n\n`{logs}`" if logs else "Log kosong.")
 
     @bot_client.on(events.NewMessage(pattern='^(?!/).*'))
     async def handler(event):
@@ -188,7 +196,10 @@ async def main():
         results = await perform_search(query)
         
         if not results:
-            return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'. Pastikan SESSION_STRING aktif.")
+            err_msg = f"❌ Tidak ditemukan hasil untuk '{query}'."
+            if not user_client:
+                err_msg += "\n\n⚠️ **Peringatan:** Session String Anda tidak aktif. Pencarian media (Video/Musik/Pesan) tidak dapat dilakukan."
+            return await msg.edit(err_msg)
         
         search_cache[query] = results
         total_pages = (len(results) + 9) // 10
