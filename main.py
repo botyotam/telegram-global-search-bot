@@ -3,7 +3,7 @@ import asyncio
 from telethon import TelegramClient, events, Button
 from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import SearchGlobalRequest
-from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl
+from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl, InputPeerEmpty
 
 # Konfigurasi dari Environment Variables
 API_ID = int(os.getenv('API_ID', 0))
@@ -65,7 +65,7 @@ async def perform_search(query, category='all'):
             max_date=None,
             offset_rate=0,
             offset_id=0,
-            offset_peer=None,
+            offset_peer=InputPeerEmpty(),
             limit=50
         ))
         
