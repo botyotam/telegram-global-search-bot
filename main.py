@@ -10,9 +10,9 @@ API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 
-client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-
-# Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
+if not API_ID or not API_HASH:
+    raise ValueError("API_ID and API_HASH must be set as environment variables.")
+client = TelegramClient(\'bot_session\', API_ID, API_HASH).start(bot_token=BOT_TOKEN)# Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
 # Dalam produksi, sebaiknya gunakan database atau cache yang lebih persisten
 search_cache = {}
 
@@ -40,8 +40,17 @@ async def perform_search(query, category='all'):
     results = []
     
     # 1. Cari Channel, Grup, dan Bot (Global Search)
-    if category in ['all', 'channel', 'group', 'bot']:
-        search_res = await client(SearchRequest(q=query, limit=50))
+    # Temporarily disable this block as SearchRequest is not suitable for global entity search.
+    # The previous error was due to SearchRequest being called without a peer, which is required for contact search.
+    # If global entity search is needed, a different Telethon API should be used.
+    # if category in ['all', 'channel', 'group', 'bot']:
+    if False:
+        # SearchRequest is for contacts, not global entities. Removing this part or replacing with a more appropriate global search if available.
+        # For now, we will rely on SearchGlobalRequest for messages and media.
+        # If the intent was to search for public channels/groups/bots, a different Telethon API call is needed.
+        # For example, client.iter_entities() or client.get_entity() with a username.
+        pass # No direct global search for entities with SearchRequest
+
         for chat in search_res.chats:
             is_bot = getattr(chat, 'bot', False)
             is_channel = getattr(chat, 'broadcast', False)
