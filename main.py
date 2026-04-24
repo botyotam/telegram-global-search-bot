@@ -1,23 +1,36 @@
 import os
 import asyncio
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl
+from telethon.sessions import StringSession
+from telethon.tl.functions.contacts import SearchRequest
+from telethon.tl.functions.messages import SearchGlobalRequest
+from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo, InputMessagesFilterDocument, InputMessagesFilterMusic, InputMessagesFilterUrl, InputPeerEmpty, InputMessagesFilterEmpty
 
 # Konfigurasi dari Environment Variables
-API_ID = int(os.getenv('API_ID', 0))
-API_HASH = os.getenv('API_HASH', '')
-BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+SESSION_STRING = os.getenv("SESSION_STRING", "")
 
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set as environment variables.")
 
-client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+if SESSION_STRING:
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+else:
+    # Fallback for initial session generation, will prompt for phone number
+    client = TelegramClient("user_session", API_ID, API_HASH)
+
+# Start the client
+client.start()
 
 # Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
 search_cache = {}
 
 CATEGORIES = {
     'all': 'Semua',
+    'channel': 'Channel',
+    'group': 'Grup',
+    'bot': 'Bot',
     'video': 'Video',
     'photo': 'Gambar',
     'file': 'File',
@@ -36,31 +49,60 @@ def get_filter(category):
 async def perform_search(query, category='all'):
     results = []
     
-    # Karena SearchGlobalRequest tidak diizinkan untuk BOT, 
-    # kita menggunakan pendekatan alternatif. 
-    # Bot hanya bisa mencari di chat di mana ia menjadi anggota.
-    # Untuk pencarian global yang sesungguhnya, diperlukan akun USER (bukan BOT).
-    
-    msg_filter = get_filter(category)
-    
-    try:
-        # Mencari pesan di semua chat yang diikuti bot
-        async for msg in client.iter_messages(None, search=query, filter=msg_filter, limit=50):
-            try:
-                chat = await msg.get_chat()
-                title = getattr(chat, 'title', 'Pesan')
-                username = getattr(chat, 'username', None)
-                link = f"https://t.me/{username}/{msg.id}" if username else "N/A"
+    # 1. Cari Channel, Grup, dan Bot (Global Search)
+    if category in ['all', 'channel', 'group', 'bot']:
+        try:
+            search_res = await client(SearchRequest(q=query, limit=50))
+            for chat in search_res.chats:
+                is_bot = getattr(chat, 'bot', False)
+                is_channel = getattr(chat, 'broadcast', False)
+                is_group = not is_channel and not is_bot
                 
+                if category == 'channel' and not is_channel: continue
+                if category == 'group' and not is_group: continue
+                if category == 'bot' and not is_bot: continue
+                
+                type_str = "Channel" if is_channel else ("Bot" if is_bot else "Grup")
+                username = f"@{chat.username}" if chat.username else "Private"
                 results.append({
-                    'title': f"{title} (Pesan)",
-                    'link': link,
-                    'type': category.capitalize() if category != 'all' else "Pesan"
+                    'title': chat.title,
+                    'link': f"https://t.me/{chat.username}" if chat.username else "N/A",
+                    'type': type_str
                 })
-            except:
-                continue
-    except Exception as e:
-        print(f"Error during search: {e}")
+        except Exception as e:
+            print(f"Error during entity search: {e}")
+
+    # 2. Cari Pesan/Media (Global Message Search)
+    if category in ['all', 'video', 'photo', 'file', 'music', 'link']:
+        msg_filter = get_filter(category)
+        try:
+            msg_res = await client(SearchGlobalRequest(
+                q=query,
+                filter=msg_filter or InputMessagesFilterEmpty(),
+                min_date=None,
+                max_date=None,
+                offset_rate=0,
+                offset_id=0,
+                offset_peer=InputPeerEmpty(),
+                limit=50
+            ))
+            
+            for msg in msg_res.messages:
+                try:
+                    chat = await msg.get_chat()
+                    title = getattr(chat, 'title', 'Pesan')
+                    username = getattr(chat, 'username', None)
+                    link = f"https://t.me/{username}/{msg.id}" if username else "N/A"
+                    
+                    results.append({
+                        'title': f"{title} (Pesan)",
+                        'link': link,
+                        'type': category.capitalize() if category != 'all' else "Pesan"
+                    })
+                except:
+                    continue
+        except Exception as e:
+            print(f"Error during global message search: {e}")
 
     return results
 
@@ -69,10 +111,15 @@ def create_pagination_keyboard(query, category, page, total_pages):
     # Baris 1: Filter Kategori
     row1 = [
         Button.inline("All", data=f"cat_{query}_all_{page}"),
+        Button.inline("Channel", data=f"cat_{query}_channel_{page}"),
+        Button.inline("Grup", data=f"cat_{query}_group_{page}")
+    ]
+    row2 = [
+        Button.inline("Bot", data=f"cat_{query}_bot_{page}"),
         Button.inline("Video", data=f"cat_{query}_video_{page}"),
         Button.inline("Gambar", data=f"cat_{query}_photo_{page}")
     ]
-    row2 = [
+    row3 = [
         Button.inline("File", data=f"cat_{query}_file_{page}"),
         Button.inline("Musik", data=f"cat_{query}_music_{page}"),
         Button.inline("Link", data=f"cat_{query}_link_{page}")
@@ -86,7 +133,7 @@ def create_pagination_keyboard(query, category, page, total_pages):
     if page < total_pages - 1:
         nav_row.append(Button.inline("Next ➡️", data=f"nav_{query}_{category}_{page+1}"))
     
-    return [row1, row2, nav_row]
+    return [row1, row2, row3, nav_row]
 
 @client.on(events.NewMessage(pattern='^(?!/).*'))
 async def handler(event):
@@ -94,11 +141,11 @@ async def handler(event):
     if len(query) < 3:
         return await event.respond("Keyword terlalu pendek (min 3 karakter).")
     
-    msg = await event.respond(f"🔍 Mencari '{query}'...\n(Catatan: Bot hanya bisa mencari di grup/channel tempat ia bergabung)")
+    msg = await event.respond(f"🔍 Mencari '{query}'...")
     results = await perform_search(query)
     
     if not results:
-        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.\nBot tidak dapat melakukan pencarian global Telegram secara luas karena batasan API untuk akun Bot.")
+        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.")
     
     search_cache[query] = results
     total_pages = (len(results) + 9) // 10
@@ -130,7 +177,7 @@ async def callback_handler(event):
             search_cache[f"{query}_{category}"] = current_results
 
     if not current_results:
-        return await event.edit("Data tidak ditemukan atau bot tidak memiliki akses ke pesan tersebut.")
+        return await event.edit("Data tidak ditemukan atau sesi berakhir.")
 
     total_pages = (len(current_results) + 9) // 10
     start = page * 10
