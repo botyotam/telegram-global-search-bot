@@ -12,11 +12,11 @@ from telethon.tl.types import (
     InputMessagesFilterUrl, InputPeerEmpty, InputMessagesFilterEmpty
 )
 
-# Konfigurasi Logging yang diperbaiki
+# Konfigurasi Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 log_stream = BytesIO()
-# Gunakan handler yang mendukung string untuk BytesIO
+
 class StringStreamHandler(logging.StreamHandler):
     def emit(self, record):
         try:
@@ -66,16 +66,15 @@ def get_filter(category):
     }
     return filters.get(category)
 
-async def perform_search(query, category='all'):
+async def perform_search(query, category='all', limit=50):
     results = []
-    logger.info(f"Memulai pencarian: query='{query}', category='{category}'")
+    logger.info(f"Pencarian: query='{query}', category='{category}'")
     
     # 1. Cari Channel, Grup, dan Bot
     if category in ['all', 'channel', 'group', 'bot']:
         try:
-            # Gunakan bot_client jika user_client tidak tersedia untuk pencarian publik
             client = user_client if user_client else bot_client
-            search_res = await client(SearchRequest(q=query, limit=100))
+            search_res = await client(SearchRequest(q=query, limit=limit))
             for chat in search_res.chats:
                 is_bot = getattr(chat, 'bot', False)
                 is_channel = getattr(chat, 'broadcast', False)
@@ -88,12 +87,11 @@ async def perform_search(query, category='all'):
                 type_str = "Channel" if is_channel else ("Bot" if is_bot else "Grup")
                 link = f"https://t.me/{chat.username}" if chat.username else f"https://t.me/c/{str(chat.id).replace('-100', '')}/1"
                 
-                results.append({'title': chat.title, 'link': link, 'type': type_str})
-            logger.info(f"Ditemukan {len(results)} entitas")
+                results.append({'title': chat.title, 'link': link, 'type': type_str, 'description': f"Username: @{chat.username}" if chat.username else "Private"})
         except Exception as e:
             logger.error(f"Error entity search: {e}")
 
-    # 2. Cari Pesan/Media (Global Message Search) - WAJIB USER_CLIENT
+    # 2. Cari Pesan/Media (Global Message Search)
     if user_client and category in ['all', 'video', 'photo', 'file', 'music', 'link']:
         msg_filter = get_filter(category)
         try:
@@ -101,10 +99,9 @@ async def perform_search(query, category='all'):
                 q=query,
                 filter=msg_filter or InputMessagesFilterEmpty(),
                 min_date=None, max_date=None, offset_rate=0, offset_id=0,
-                offset_peer=InputPeerEmpty(), limit=100
+                offset_peer=InputPeerEmpty(), limit=limit
             ))
             
-            msg_count = 0
             for msg in msg_res.messages:
                 try:
                     chat = await msg.get_chat()
@@ -127,16 +124,13 @@ async def perform_search(query, category='all'):
                     results.append({
                         'title': f"{title} ({m_type})",
                         'link': link,
-                        'type': m_type
+                        'type': m_type,
+                        'description': msg.message[:100] if msg.message else "Media file"
                     })
-                    msg_count += 1
                 except:
                     continue
-            logger.info(f"Ditemukan {msg_count} pesan/media")
         except Exception as e:
             logger.error(f"Error message search: {e}")
-    elif not user_client and category not in ['all', 'channel', 'group', 'bot']:
-        logger.warning("Pencarian media dilewati karena user_client tidak aktif.")
 
     return results
 
@@ -158,34 +152,62 @@ async def main():
     bot_client = TelegramClient("bot_session", API_ID, API_HASH)
     await bot_client.start(bot_token=BOT_TOKEN)
     
-    user_status = "❌ Tidak Terhubung (Session String Kosong)"
+    user_status = "❌ Tidak Terhubung"
     if SESSION_STRING:
         try:
             user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
             await user_client.start()
             me = await user_client.get_me()
-            user_status = f"✅ Terhubung sebagai {me.first_name} (@{me.username})"
-            logger.info(f"User client aktif: {me.username}")
+            user_status = f"✅ Terhubung sebagai {me.first_name}"
         except Exception as e:
-            user_status = f"⚠️ Error Session: {str(e)}"
-            user_client = None # Pastikan None jika gagal
-            logger.error(f"Gagal memulai user client: {e}")
+            user_status = f"⚠️ Error: {str(e)}"
+            user_client = None
 
     @bot_client.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
-        await event.respond("👋 **Halo! Selamat datang di Global Search Bot.**\n\nKetik kata kunci untuk mencari (min. 3 karakter).\n\nKategori: Channel, Grup, Bot, Video, Gambar, File, Musik, Link.")
+        welcome = (
+            "🌟 **Selamat Datang di OKSearch Clone!**\n\n"
+            "Cari apa saja di Telegram: Channel, Grup, Bot, Video, Musik, dan File.\n\n"
+            "🔍 **Cara Mencari:**\n"
+            "1. Kirim kata kunci langsung di sini.\n"
+            "2. Gunakan **Inline Mode** dengan mengetik `@{bot_username} keyword` di chat mana pun.\n\n"
+            "💡 *Gunakan filter di bawah hasil untuk hasil lebih spesifik.*"
+        )
+        me = await bot_client.get_me()
+        await event.respond(welcome.format(bot_username=me.username))
 
     @bot_client.on(events.NewMessage(pattern='/status'))
     async def status_handler(event):
         if event.sender_id == ADMIN_ID:
-            await event.respond(f"📊 **Status Sistem**\n\n🔹 **Bot:** ✅ Aktif\n🔹 **User Session:** {user_status}\n\n💡 *Jika error AuthKeyDuplicated, silakan buat SESSION_STRING baru.*")
+            await event.respond(f"📊 **Status Sistem**\n\n🔹 **Bot:** ✅ Aktif\n🔹 **User Session:** {user_status}")
 
     @bot_client.on(events.NewMessage(pattern='/logs'))
     async def logs_handler(event):
         if event.sender_id == ADMIN_ID:
             log_stream.seek(0)
             logs = log_stream.read().decode('utf-8', errors='ignore')[-4000:]
-            await event.respond(f"📜 **Internal Logs:**\n\n`{logs}`" if logs else "Log kosong.")
+            await event.respond(f"📜 **Logs:**\n\n`{logs}`" if logs else "Log kosong.")
+
+    # Handler Inline Query (Mirip @OKSearch)
+    @bot_client.on(events.InlineQuery)
+    async def inline_handler(event):
+        query = event.text
+        if len(query) < 3:
+            return await event.answer([])
+        
+        results = await perform_search(query, limit=20)
+        inline_results = []
+        for i, res in enumerate(results):
+            emoji = TYPE_EMOJIS.get(res['type'], "🔹")
+            inline_results.append(
+                event.builder.article(
+                    title=f"{emoji} {res['title']}",
+                    description=f"[{res['type']}] {res['description']}",
+                    text=f"🔎 **Hasil Pencarian:** [{res['title']}]({res['link']})\n🔹 **Tipe:** {res['type']}",
+                    link_preview=False
+                )
+            )
+        await event.answer(inline_results)
 
     @bot_client.on(events.NewMessage(pattern='^(?!/).*'))
     async def handler(event):
@@ -196,10 +218,7 @@ async def main():
         results = await perform_search(query)
         
         if not results:
-            err_msg = f"❌ Tidak ditemukan hasil untuk '{query}'."
-            if not user_client:
-                err_msg += "\n\n⚠️ **Peringatan:** Session String Anda tidak aktif. Pencarian media (Video/Musik/Pesan) tidak dapat dilakukan."
-            return await msg.edit(err_msg)
+            return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.")
         
         search_cache[query] = results
         total_pages = (len(results) + 9) // 10
