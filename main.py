@@ -9,19 +9,24 @@ from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVide
 # Konfigurasi dari Environment Variables
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set as environment variables.")
 
-if SESSION_STRING:
-    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-else:
-    # Fallback for initial session generation, will prompt for phone number
-    client = TelegramClient("user_session", API_ID, API_HASH)
+# Inisialisasi Bot Client
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN must be set as an environment variable.")
+bot_client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-# Start the client
-client.start()
+# Inisialisasi User Client untuk pencarian global
+user_client = None
+if SESSION_STRING:
+    user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    user_client.start()
+else:
+    print("Peringatan: SESSION_STRING tidak ditemukan. Pencarian global mungkin tidak berfungsi.")
 
 # Cache sederhana untuk menyimpan hasil pencarian (untuk paginasi)
 search_cache = {}
@@ -48,11 +53,14 @@ def get_filter(category):
 
 async def perform_search(query, category='all'):
     results = []
-    
+    if not user_client:
+        print("User client tidak aktif. Tidak dapat melakukan pencarian global.")
+        return results
+
     # 1. Cari Channel, Grup, dan Bot (Global Search)
     if category in ['all', 'channel', 'group', 'bot']:
         try:
-            search_res = await client(SearchRequest(q=query, limit=50))
+            search_res = await user_client(SearchRequest(q=query, limit=50))
             for chat in search_res.chats:
                 is_bot = getattr(chat, 'bot', False)
                 is_channel = getattr(chat, 'broadcast', False)
@@ -76,7 +84,7 @@ async def perform_search(query, category='all'):
     if category in ['all', 'video', 'photo', 'file', 'music', 'link']:
         msg_filter = get_filter(category)
         try:
-            msg_res = await client(SearchGlobalRequest(
+            msg_res = await user_client(SearchGlobalRequest(
                 q=query,
                 filter=msg_filter or InputMessagesFilterEmpty(),
                 min_date=None,
@@ -135,7 +143,7 @@ def create_pagination_keyboard(query, category, page, total_pages):
     
     return [row1, row2, row3, nav_row]
 
-@client.on(events.NewMessage(pattern='^(?!/).*'))
+@bot_client.on(events.NewMessage(pattern='^(?!/).*'))
 async def handler(event):
     query = event.text
     if len(query) < 3:
@@ -145,7 +153,7 @@ async def handler(event):
     results = await perform_search(query)
     
     if not results:
-        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.")
+        return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.\nPastikan SESSION_STRING sudah diatur dengan benar dan akun user aktif.")
     
     search_cache[query] = results
     total_pages = (len(results) + 9) // 10
@@ -157,7 +165,7 @@ async def handler(event):
     
     await msg.edit(text, buttons=create_pagination_keyboard(query, 'all', 0, total_pages), link_preview=False)
 
-@client.on(events.CallbackQuery(data=lambda d: d.startswith(b'nav_') or d.startswith(b'cat_')))
+@bot_client.on(events.CallbackQuery(data=lambda d: d.startswith(b'nav_') or d.startswith(b'cat_')))
 async def callback_handler(event):
     data = event.data.decode().split('_')
     action = data[0] # nav atau cat
@@ -191,4 +199,12 @@ async def callback_handler(event):
     await event.edit(text, buttons=create_pagination_keyboard(query, category, page, total_pages), link_preview=False)
 
 print("Bot sedang berjalan...")
-client.run_until_disconnected()
+# Run both clients until disconnected
+async def main():
+    await asyncio.gather(
+        bot_client.run_until_disconnected(),
+        user_client.run_until_disconnected() if user_client else asyncio.sleep(0) # user_client might be None
+    )
+
+if __name__ == '__main__':
+    asyncio.run(main())
