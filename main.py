@@ -179,7 +179,13 @@ async def main():
     @bot_client.on(events.NewMessage(pattern='/status'))
     async def status_handler(event):
         if event.sender_id == ADMIN_ID:
-            await event.respond(f"📊 **Status Sistem**\n\n🔹 **Bot:** ✅ Aktif\n🔹 **User Session:** {user_status}")
+            me_bot = await bot_client.get_me()
+            await event.respond(
+                f"📊 **Status Sistem**\n\n"
+                f"🔹 **Bot:** ✅ Aktif (@{me_bot.username})\n"
+                f"🔹 **User Session:** {user_status}\n"
+                f"🔹 **Admin ID:** `{ADMIN_ID}`"
+            )
 
     @bot_client.on(events.NewMessage(pattern='/logs'))
     async def logs_handler(event):
@@ -211,22 +217,27 @@ async def main():
 
     @bot_client.on(events.NewMessage(pattern='^(?!/).*'))
     async def handler(event):
-        query = event.text
-        if len(query) < 3: return await event.respond("Keyword terlalu pendek.")
-        
-        msg = await event.respond(f"🔍 Mencari '{query}'...")
-        results = await perform_search(query)
-        
-        if not results:
-            return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.")
-        
-        search_cache[query] = results
-        total_pages = (len(results) + 9) // 10
-        text = f"🔎 Hasil Pencarian: **{query}**\n\n"
-        for i, res in enumerate(results[0:10], 1):
-            text += f"{i}. {TYPE_EMOJIS.get(res['type'], '🔹')} [{res['title']}]({res['link']}) ({res['type']})\n"
-        
-        await msg.edit(text, buttons=create_pagination_keyboard(query, 'all', 0, total_pages), link_preview=False)
+        if event.is_private or event.mentioned:
+            query = event.text
+            if len(query) < 3: return await event.respond("Keyword terlalu pendek (minimal 3 karakter).")
+            
+            msg = await event.respond(f"🔍 Mencari '{query}'...")
+            try:
+                results = await perform_search(query)
+                
+                if not results:
+                    return await msg.edit(f"❌ Tidak ditemukan hasil untuk '{query}'.")
+                
+                search_cache[query] = results
+                total_pages = (len(results) + 9) // 10
+                text = f"🔎 Hasil Pencarian: **{query}**\n\n"
+                for i, res in enumerate(results[0:10], 1):
+                    text += f"{i}. {TYPE_EMOJIS.get(res['type'], '🔹')} [{res['title']}]({res['link']}) ({res['type']})\n"
+                
+                await msg.edit(text, buttons=create_pagination_keyboard(query, 'all', 0, total_pages), link_preview=False)
+            except Exception as e:
+                logger.error(f"Error in search handler: {e}")
+                await msg.edit(f"❌ Terjadi kesalahan saat mencari: {str(e)}")
 
     @bot_client.on(events.CallbackQuery(data=lambda d: d.startswith(b'nav_') or d.startswith(b'cat_')))
     async def callback_handler(event):
@@ -255,7 +266,11 @@ async def main():
         await event.edit(text, buttons=create_pagination_keyboard(query, category, page, total_pages), link_preview=False)
 
     print("Bot sedang berjalan...")
-    await asyncio.gather(bot_client.run_until_disconnected(), user_client.run_until_disconnected() if user_client else asyncio.sleep(0))
+    tasks = [bot_client.run_until_disconnected()]
+    if user_client:
+        tasks.append(user_client.run_until_disconnected())
+    
+    await asyncio.gather(*tasks)
 
 if __name__ == '__main__':
     try:
