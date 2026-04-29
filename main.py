@@ -168,13 +168,25 @@ async def main():
         welcome = (
             "🌟 **Selamat Datang di OKSearch Clone!**\n\n"
             "Cari apa saja di Telegram: Channel, Grup, Bot, Video, Musik, dan File.\n\n"
-            "🔍 **Cara Mencari:**\n"
-            "1. Kirim kata kunci langsung di sini.\n"
-            "2. Gunakan **Inline Mode** dengan mengetik `@{bot_username}` diikuti kata kunci di chat mana pun.\n\n"
-            "💡 *Gunakan filter di bawah hasil untuk hasil lebih spesifik.*"
+            "Ketik /help untuk melihat cara menggunakan bot ini."
         )
+        await event.respond(welcome)
+
+    @bot_client.on(events.NewMessage(pattern='/help'))
+    async def help_handler(event):
         me = await bot_client.get_me()
-        await event.respond(welcome.format(bot_username=me.username))
+        help_text = (
+            "🔍 **Cara Menggunakan Bot:**\n\n"
+            "1. **Pencarian Langsung:** Kirim kata kunci (minimal 3 karakter) langsung ke chat ini.\n"
+            "2. **Inline Mode:** Ketik `@{bot_username}` diikuti kata kunci di chat mana pun (grup atau chat pribadi lain).\n"
+            "3. **Filter:** Gunakan tombol di bawah hasil pencarian untuk memfilter berdasarkan Video, Gambar, File, dll.\n\n"
+            "📜 **Daftar Perintah:**\n"
+            "• /start - Memulai bot\n"
+            "• /help - Menampilkan pesan bantuan ini\n"
+            "• /status - (Admin) Cek status bot dan session\n"
+            "• /logs - (Admin) Cek log aktivitas bot"
+        )
+        await event.respond(help_text.format(bot_username=me.username))
 
     @bot_client.on(events.NewMessage(pattern='/status'))
     async def status_handler(event):
