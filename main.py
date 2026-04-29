@@ -170,7 +170,7 @@ async def main():
             "Cari apa saja di Telegram: Channel, Grup, Bot, Video, Musik, dan File.\n\n"
             "🔍 **Cara Mencari:**\n"
             "1. Kirim kata kunci langsung di sini.\n"
-            "2. Gunakan **Inline Mode** dengan mengetik `@{bot_username} keyword` di chat mana pun.\n\n"
+            "2. Gunakan **Inline Mode** dengan mengetik `@{bot_username}` diikuti kata kunci di chat mana pun.\n\n"
             "💡 *Gunakan filter di bawah hasil untuk hasil lebih spesifik.*"
         )
         me = await bot_client.get_me()
