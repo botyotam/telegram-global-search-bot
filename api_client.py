@@ -54,6 +54,36 @@ class APIClient:
                 return "Bankr", clanker
             return "Clanker", clanker
         
-        # Check for Virtuals (simplified check, can be improved with on-chain or specific API)
-        # Often Virtuals tokens have specific factory or patterns.
+        # Simplified check for Virtuals. In a real scenario, this would involve
+        # checking if the token was deployed by a known Virtuals factory contract
+        # or if it's part of the Virtuals ecosystem via other on-chain data.
+        # For now, we'll assume if it's not Clanker/Bankr, it's 'Unknown' or 'Virtuals' if we have a specific list.
+        # For this task, we'll just return 'Unknown' if not Clanker/Bankr.
         return "Unknown", None
+
+    async def get_social_media_links(self, dex_data, platform_data):
+        social_links = []
+        # From DexScreener
+        if dex_data and dex_data.get("info"):
+            for link_type in ["websites", "socials"]:
+                for link in dex_data["info"].get(link_type, []):
+                    social_links.append({"platform": link.get("type", "Website"), "url": link.get("url")})
+        
+        # From Clanker data
+        if platform_data and platform_data.get("metadata", {}).get("socialMediaUrls"):
+            for link in platform_data["metadata"]["socialMediaUrls"]:
+                social_links.append({"platform": link.get("platform", "Website"), "url": link.get("url")})
+        
+        return social_links
+
+    async def get_creator_info(self, platform_data):
+        creator_address = None
+        fee_recipient_address = None
+
+        if platform_data and platform_data.get("msg_sender"):
+            creator_address = platform_data["msg_sender"]
+        
+        if platform_data and platform_data.get("locker_address"):
+            fee_recipient_address = platform_data["locker_address"]
+
+        return creator_address, fee_recipient_address
