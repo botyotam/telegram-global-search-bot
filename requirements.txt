@@ -1,2 +1,7 @@
-telethon
-cryptg
+python-telegram-bot>=20.0
+requests
+httpx
+aiosqlite
+web3
+humanize
+python-dotenv
